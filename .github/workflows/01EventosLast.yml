@@ -66,44 +66,52 @@ jobs:
           gzip -9 -c ./output/01events_past.json > ./output/01events_past.json.gz
           ls -la ./output/01events_past.json.gz
 
-      - name: Upload to FTP with lftp (FTPS, retries, mkdir -p)
+      - name: Upload to FTP (curl, conexiones separadas)
         env:
-          FTP_SERVER:     ${{ secrets.FTP_SERVER }}      # solo host, sin ftp://
+          FTP_SERVER:     ${{ secrets.FTP_SERVER }}
           FTP_USERNAME:   ${{ secrets.FTP_USERNAME }}
           FTP_PASSWORD:   ${{ secrets.FTP_PASSWORD }}
-          FTP_REMOTE_DIR: ${{ secrets.FTP_REMOTE_DIR }}  # ej: /public_html (sin / final)
+          FTP_REMOTE_DIR: ${{ secrets.FTP_REMOTE_DIR }}
         run: |
           set -euo pipefail
-
-          sudo apt-get update && sudo apt-get install -y lftp
 
           _server_raw="${FTP_SERVER:-}"
           _rdir_raw="${FTP_REMOTE_DIR:-}"
 
           FTP_SERVER_CLEAN="$(printf '%s' "$_server_raw" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's#^ftp://##')"
           FTP_REMOTE_DIR_CLEAN="$(printf '%s' "$_rdir_raw" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's#/*$##')"
-          if [ -n "$FTP_REMOTE_DIR_CLEAN" ] && [ "${FTP_REMOTE_DIR_CLEAN#/}" = "$FTP_REMOTE_DIR_CLEAN" ]; then
-            FTP_REMOTE_DIR_CLEAN="/$FTP_REMOTE_DIR_CLEAN"
-          fi
+          [ -n "$FTP_REMOTE_DIR_CLEAN" ] && [ "${FTP_REMOTE_DIR_CLEAN#/}" = "$FTP_REMOTE_DIR_CLEAN" ] && FTP_REMOTE_DIR_CLEAN="/$FTP_REMOTE_DIR_CLEAN"
 
           REMOTE_DIR="${FTP_REMOTE_DIR_CLEAN}/Competiciones/EventosLast/data"
+          BASE_URL="ftp://${FTP_SERVER_CLEAN}${REMOTE_DIR}"
 
-          echo "Subiendo a: ftps://${FTP_SERVER_CLEAN}${REMOTE_DIR}/"
+          echo "Subiendo a: ${BASE_URL}/"
 
-          lftp -e "
-            set ssl:verify-certificate no;
-            set ftp:ssl-force true;              # FTPS explícito
-            set ftp:ssl-protect-data true;       # Protege canal de datos (PROT P)
-            set net:max-retries 2;
-            set net:timeout 30;
-            set net:persist-retries 1;
-            set xfer:clobber on;                 # sobreescribir
-            mkdir -p ${REMOTE_DIR};
-            cd ${REMOTE_DIR};
-            put -O . ./output/01events_past.json.gz;
-            put -O . ./output/01events_past.json;
-            bye
-          " -u "${FTP_USERNAME}","${FTP_PASSWORD}" "ftps://${FTP_SERVER_CLEAN}"
+          common_opts=(
+            --fail
+            --show-error
+            --silent
+            --ssl-reqd
+            --ftp-create-dirs
+            --disable-epsv
+            --ftp-skip-pasv-ip
+            --ftp-method nocwd
+            --user "${FTP_USERNAME}:${FTP_PASSWORD}"
+            --retry 3
+            --retry-delay 2
+          )
+
+          echo "📤 01events_past.json.gz"
+          curl "${common_opts[@]}" --upload-file "./output/01events_past.json.gz" "${BASE_URL}/01events_past.json.gz"
+
+          # Pequeña pausa para que el servidor cierre/limpie la sesión de datos previa
+          sleep 2
+
+          echo "📤 01events_past.json"
+          curl "${common_opts[@]}" --upload-file "./output/01events_past.json"    "${BASE_URL}/01events_past.json"
+
+          echo "✅ Subidas completadas"
+
 
       - name: Save artifacts (backup)
         uses: actions/upload-artifact@v4
