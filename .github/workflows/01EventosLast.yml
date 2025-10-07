@@ -1,0 +1,123 @@
+name: 01EventosLast
+
+on:
+  schedule:
+    - cron: '1 4 * * *'   # Diario a las 04:01 UTC
+  workflow_dispatch:
+
+jobs:
+  scrape-and-upload:
+    runs-on: ubuntu-22.04
+    env:
+      TZ: Europe/Madrid
+      HEADLESS: "true"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+
+      - name: Install Google Chrome
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg unzip
+          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+          google-chrome-stable --version
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install selenium webdriver-manager beautifulsoup4 lxml requests
+
+      - name: Prepare output dir
+        run: mkdir -p ./output
+
+      - name: Run 01EventosLast.py
+        env:
+          # (Opcional) Mueve credenciales a secrets y léelas en el script
+          FLOW_EMAIL: ${{ secrets.FLOW_EMAIL }}
+          FLOW_PASS:  ${{ secrets.FLOW_PASS }}
+        run: |
+          set -e
+          echo "=== Ejecutando 01EventosLast.py ==="
+          python ./01EventosLast.py
+          echo "=== Fin de 01EventosLast.py ==="
+
+      - name: Verify output
+        run: |
+          set -e
+          echo '=== Verificando archivo generado ==='
+          ls -la ./output || true
+          test -f ./output/01events_past.json
+          BYTES=$(stat -c%s ./output/01events_past.json)
+          echo "✅ 01events_past.json encontrado (${BYTES} bytes)"
+
+      - name: Compress JSON (gzip)
+        run: |
+          gzip -9 -c ./output/01events_past.json > ./output/01events_past.json.gz
+          ls -la ./output/01events_past.json.gz
+
+      - name: Upload to FTP (gz + original)
+        env:
+          FTP_SERVER:     ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME:   ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD:   ${{ secrets.FTP_PASSWORD }}
+          FTP_REMOTE_DIR: ${{ secrets.FTP_REMOTE_DIR }}   # p.ej. /public_html
+        run: |
+          set -e
+          if [ -z "$FTP_SERVER" ] || [ -z "$FTP_USERNAME" ] || [ -z "$FTP_PASSWORD" ]; then
+            echo "❌ Falta configurar FTP_SERVER/FTP_USERNAME/FTP_PASSWORD"
+            exit 1
+          fi
+
+          REMOTE_DIR="${FTP_REMOTE_DIR}/Competiciones/EventosLast/data"
+          BASE_URL="ftp://${FTP_SERVER}${REMOTE_DIR}"
+
+          echo "Subiendo a: ${BASE_URL}/"
+
+          # Crear directorios si no existen y subir .gz
+          curl --fail \
+               --ssl-reqd \
+               --ftp-create-dirs \
+               --disable-epsv \
+               --ftp-skip-pasv-ip \
+               --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
+               --upload-file "./output/01events_past.json.gz" \
+               "${BASE_URL}/01events_past.json.gz"
+
+          echo "✅ 01events_past.json.gz subido"
+
+          # Subir también el JSON sin comprimir
+          curl --fail \
+               --ssl-reqd \
+               --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
+               --upload-file "./output/01events_past.json" \
+               "${BASE_URL}/01events_past.json"
+
+          echo "✅ 01events_past.json subido"
+
+      - name: Save artifacts (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: eventos-last-json
+          path: |
+            ./output/01events_past.json
+            ./output/01events_past.json.gz
+          retention-days: 7
+
+      - name: Debug on failure
+        if: failure()
+        run: |
+          echo "=== DEBUG ==="
+          ls -la ./output || true
+          which google-chrome-stable || true
+          google-chrome-stable --version || true
