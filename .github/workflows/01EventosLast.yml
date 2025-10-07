@@ -66,25 +66,43 @@ jobs:
           gzip -9 -c ./output/01events_past.json > ./output/01events_past.json.gz
           ls -la ./output/01events_past.json.gz
 
-      - name: Upload to FTP (gz + original)
+      - name: Upload to FTP (gz + original) — robust
         env:
-          FTP_SERVER:     ${{ secrets.FTP_SERVER }}
+          FTP_SERVER:     ${{ secrets.FTP_SERVER }}      # solo host, sin ftp://
           FTP_USERNAME:   ${{ secrets.FTP_USERNAME }}
           FTP_PASSWORD:   ${{ secrets.FTP_PASSWORD }}
-          FTP_REMOTE_DIR: ${{ secrets.FTP_REMOTE_DIR }}   # p.ej. /public_html
+          FTP_REMOTE_DIR: ${{ secrets.FTP_REMOTE_DIR }}  # ej: /public_html (sin / final)
         run: |
-          set -e
-          if [ -z "$FTP_SERVER" ] || [ -z "$FTP_USERNAME" ] || [ -z "$FTP_PASSWORD" ]; then
-            echo "❌ Falta configurar FTP_SERVER/FTP_USERNAME/FTP_PASSWORD"
+          set -euo pipefail
+
+          # --- Sanear posibles CR/LF y espacios accidentales ---
+          _server_raw="${FTP_SERVER:-}"
+          _rdir_raw="${FTP_REMOTE_DIR:-}"
+
+          # Elimina \r y \n, y espacios al inicio/fin
+          FTP_SERVER_CLEAN="$(printf '%s' "$_server_raw" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          FTP_REMOTE_DIR_CLEAN="$(printf '%s' "$_rdir_raw" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+          # Quita 'ftp://' si el secret lo trae por error y cualquier '/' final
+          FTP_SERVER_CLEAN="${FTP_SERVER_CLEAN#ftp://}"
+          FTP_REMOTE_DIR_CLEAN="${FTP_REMOTE_DIR_CLEAN%/}"
+
+          # Asegura que el remote dir empieza por '/'
+          if [ -n "$FTP_REMOTE_DIR_CLEAN" ] && [ "${FTP_REMOTE_DIR_CLEAN#/}" = "$FTP_REMOTE_DIR_CLEAN" ]; then
+            FTP_REMOTE_DIR_CLEAN="/$FTP_REMOTE_DIR_CLEAN"
+          fi
+
+          if [ -z "$FTP_SERVER_CLEAN" ] || [ -z "${FTP_USERNAME:-}" ] || [ -z "${FTP_PASSWORD:-}" ]; then
+            echo "❌ Falta FTP_SERVER/FTP_USERNAME/FTP_PASSWORD"
             exit 1
           fi
 
-          REMOTE_DIR="${FTP_REMOTE_DIR}/Competiciones/EventosLast/data"
-          BASE_URL="ftp://${FTP_SERVER}${REMOTE_DIR}"
+          REMOTE_DIR="${FTP_REMOTE_DIR_CLEAN}/Competiciones/EventosLast/data"
+          BASE_URL="ftp://${FTP_SERVER_CLEAN}${REMOTE_DIR}"
 
           echo "Subiendo a: ${BASE_URL}/"
 
-          # Crear directorios si no existen y subir .gz
+          # Subir .gz
           curl --fail \
                --ssl-reqd \
                --ftp-create-dirs \
@@ -96,7 +114,7 @@ jobs:
 
           echo "✅ 01events_past.json.gz subido"
 
-          # Subir también el JSON sin comprimir
+          # Subir JSON original
           curl --fail \
                --ssl-reqd \
                --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
@@ -104,6 +122,7 @@ jobs:
                "${BASE_URL}/01events_past.json"
 
           echo "✅ 01events_past.json subido"
+
 
       - name: Save artifacts (backup)
         uses: actions/upload-artifact@v4
