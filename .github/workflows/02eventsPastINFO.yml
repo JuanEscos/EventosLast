@@ -1,4 +1,4 @@
-name: EventosPastInfo
+name: 02EventosPastInfo
 
 on:
   schedule:
@@ -82,7 +82,7 @@ jobs:
          MAX_RUNTIME_MIN: "25"     # parachute: cortar de forma ordenada a los 25'
       run: |
         echo "=== EJECUTANDO SCRAPER ==="
-        python ./EventosProxBeta.py --module all
+        python ./02eventsPastINFO.py --module all
         echo "=== SCRAPER COMPLETADO ==="
 
     - name: Verify generated files
