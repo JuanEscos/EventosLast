@@ -1,3 +1,10 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Oct  8 13:24:29 2025
+
+@author: Juan
+"""
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -5,7 +12,7 @@
 FLOWAGILITY SCRAPER - SOLO EVENTOS (01events)
 - Login
 - Scroll completo y parseo estático con BeautifulSoup
-- Salida: 01events.json y 01events_YYYY-MM-DD.json en OUT_DIR
+- Salida: 01events_past.json y 01events_pastYYYY-MM-DD.json en OUT_DIR
 """
 
 import os
