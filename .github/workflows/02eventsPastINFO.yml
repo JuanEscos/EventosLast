@@ -1,8 +1,8 @@
-name: EventosLastInfo
+name: EventosPastInfo
 
 on:
   schedule:
-    - cron: '1 4 * * *'  # Ejecutar diariamente a las 04:01 UTC
+    - cron: '1 6 * * *'  # Ejecutar diariamente a las 04:01 UTC
   workflow_dispatch:  # Permitir ejecución manual
 
 jobs:
@@ -92,7 +92,7 @@ jobs:
         
         # Verificar que existen los archivos finales
         missing_files=0
-        required_files=("01events.json" "02info.json")
+        required_files=("01events_past.json" "02events_pastINFO.json")
         
         for file in "${required_files[@]}"; do
             if [ -f "./output/$file" ]; then
@@ -145,13 +145,13 @@ jobs:
             exit 1
         fi
         
-        REMOTE_DIR="${FTP_REMOTE_DIR}/Competiciones/EventosLast/data"
+        REMOTE_DIR="${FTP_REMOTE_DIR}/Competiciones/EventsPast/data"
         BASE_URL="ftp://${FTP_SERVER}${REMOTE_DIR}"
         
         echo "Subiendo a: ${BASE_URL}/"
         
         # Archivos comprimidos a subir
-        COMPRESSED_FILES=("01events.json.gz" "02info.json.gz")
+        COMPRESSED_FILES=("01events_past.json.gz" "02events_pastINFO.json.gz")
         
         # Subir archivos comprimidos
         for file in "${COMPRESSED_FILES[@]}"; do
@@ -200,10 +200,10 @@ jobs:
         curl --fail \
              --ssl-reqd \
              --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
-             --upload-file "./output/01events.json" \
+             --upload-file "./output/01events_past.json" \
              "${BASE_URL}/01events.json" && \
         echo "✅ 01events.json subido exitosamente" || \
-        echo "⚠️  No se pudo subir 01events.json sin comprimir"
+        echo "⚠️  No se pudo subir 01events_past.json sin comprimir"
 
     - name: Create backup directory
       run: mkdir -p ./backup
@@ -211,8 +211,8 @@ jobs:
     - name: Backup uncompressed files
       run: |
         echo "=== CREANDO BACKUP LOCAL ==="
-        cp ./output/01events.json ./backup/
-        cp ./output/02info.json ./backup/
+        cp ./output/01events_past.json ./backup/
+        cp ./output/02events_pastINFO.json ./backup/
         echo "Backup de archivos sin comprimir creado en ./backup/"
 
     - name: Upload backup as artifact
@@ -220,8 +220,8 @@ jobs:
       with:
         name: json-backup-uncompressed
         path: |
-          ./backup/01events.json
-          ./backup/02info.json
+          ./backup/01events_past.json
+          ./backup/02events_pastINFO.json
         retention-days: 7
 
     - name: Upload compressed files as artifact
@@ -229,8 +229,8 @@ jobs:
       with:
         name: json-compressed
         path: |
-          ./output/01events.json.gz
-          ./output/02info.json.gz
+          ./output/01events_past.json.gz
+          ./output/02events_pastINFO.json.gz
         retention-days: 3
 
     - name: Debug on failure
