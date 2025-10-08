@@ -2,7 +2,7 @@ name: EventosPastInfo
 
 on:
   schedule:
-    - cron: '1 6 * * *'  # Ejecutar diariamente a las 04:01 UTC
+    - cron: '1 4 * * *'  # Ejecutar diariamente a las 04:01 UTC
   workflow_dispatch:  # Permitir ejecución manual
 
 jobs:
@@ -196,12 +196,12 @@ jobs:
         done
         
         # También intentar subir el 01events.json sin comprimir (siempre es pequeño)
-        echo "📤 Subiendo 01events.json (sin comprimir)"
+        echo "📤 Subiendo 01events_past.json (sin comprimir)"
         curl --fail \
              --ssl-reqd \
              --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
              --upload-file "./output/01events_past.json" \
-             "${BASE_URL}/01events.json" && \
+             "${BASE_URL}/01events_past.json" && \
         echo "✅ 01events.json subido exitosamente" || \
         echo "⚠️  No se pudo subir 01events_past.json sin comprimir"
 
