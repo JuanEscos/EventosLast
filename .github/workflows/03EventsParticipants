@@ -1,0 +1,204 @@
+name: 03EventsParticipantes
+
+on:
+  schedule:
+    - cron: '5 2 * * *'   # 02:05 UTC
+    - cron: '5 5 * * *'   # 05:05 UTC
+  workflow_dispatch: {}
+
+concurrency:
+  group: eventos-full-scrape
+  cancel-in-progress: false
+
+jobs:
+  full-scrape:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+
+    env:
+      TZ: Europe/Madrid
+      OUT_DIR: ./output
+
+      # Selenium / Chrome
+      HEADLESS: "true"
+
+      # Politeness (delays)
+      THROTTLE_PANEL_MS_MIN: "500"
+      THROTTLE_PANEL_MS_MAX: "1100"
+      THROTTLE_EVENT_S_MIN: "8"
+      THROTTLE_EVENT_S_MAX: "14"
+      MAX_PANELS_PER_EVENT: "0"       # 0 = sin tope por evento
+
+      # Límites de tiempo
+      PER_EVENT_MAX_S: "600"          # 10 min por evento
+      MAX_RUNTIME_MIN: "0"            # 0 = sin límite global
+
+      # Chunking desactivado (procesa TODOS)
+      CHUNK_SIZE: "0"
+      CHUNK_OFFSET: "0"
+
+      # Debug enriquecido
+      DEBUG_PARTICIPANTS: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Chrome & ChromeDriver
+        run: |
+          set -e
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg unzip
+          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+          CHROME_VERSION=$(google-chrome-stable --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
+          URL="https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/${CHROME_VERSION}/linux64/chromedriver-linux64.zip"
+          if wget -q --spider "$URL"; then
+            wget -O /tmp/chromedriver.zip "$URL"
+            unzip -o /tmp/chromedriver.zip -d /tmp/
+            sudo mv /tmp/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver
+            sudo chmod +x /usr/local/bin/chromedriver
+          else
+            sudo apt-get install -y chromium-chromedriver
+            sudo ln -sf /usr/bin/chromedriver /usr/local/bin/chromedriver
+          fi
+          which google-chrome-stable && google-chrome-stable --version
+          which chromedriver && chromedriver --version
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install selenium beautifulsoup4 python-dotenv lxml requests webdriver-manager
+
+      - name: Prepare output dirs
+        run: mkdir -p "${OUT_DIR}" "${OUT_DIR}/participants"
+
+      # ========= MÓDULO 1: EVENTOS (SIN LÍMITE) =========
+      - name: Run Module 1 (events)
+        env:
+          FLOW_EMAIL: ${{ secrets.FLOW_EMAIL }}
+          FLOW_PASS:  ${{ secrets.FLOW_PASS }}
+          HEADLESS: "true"
+          MAX_SCROLLS: "15"
+          SCROLL_WAIT_S: "3.0"
+          LIMIT_EVENTS: "0"     # 0 = sin límite
+          OUT_DIR: "./output"
+        run: |
+          echo "=== MÓDULO 1: EXTRACCIÓN DE EVENTOS ==="
+          # Cambia el nombre del script si el tuyo es distinto:
+          python ./flow_events.py --module events
+          echo "=== FIN MÓDULO 1 ==="
+          ls -la ./output || true
+
+      - name: Ensure 01events.json
+        run: |
+          if [ ! -f "./output/01events.json" ]; then
+            echo "❌ No se generó ./output/01events_past.json"
+            exit 1
+          fi
+          echo "✅ Encontrado 01events_past.json"
+          ls -la ./output/01events_past.json
+
+      # ========= MÓDULO 2: PARTICIPANTES (TODOS) =========
+      - name: Run Module 2 (participants, full)
+        env:
+          FLOW_EMAIL: ${{ secrets.FLOW_EMAIL }}
+          FLOW_PASS:  ${{ secrets.FLOW_PASS }}
+        run: |
+          echo "=== MÓDULO 2: PARTICIPANTES (FULL) ==="
+          # Script v4.x que te pasé: flow_participants_debug.py
+          python ./flow_participants_debug.py
+          echo "=== FIN MÓDULO 2 ==="
+          ls -la ./output || true
+          ls -la ./output/participants || true
+
+      - name: Sanity check JSON
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          p = pathlib.Path("output/02participants.json")
+          if not p.exists():
+              print("❌ 02participants.json no existe"); sys.exit(1)
+          data = json.loads(p.read_text(encoding="utf-8"))
+          print("✅ Total participantes:", len(data))
+          if data:
+              sample = {k: data[0].get(k) for k in ("event_id","BinomID","guia","perro","club")}
+              print("Ejemplo:", sample)
+          PY
+
+      - name: Gzip outputs (incluye 01events)
+        run: |
+          set -e
+          for f in output/01events.json output/02participants.json output/02participants_debug.json output/participants/*.json; do
+            if [ -f "$f" ]; then
+              gzip -9 -c "$f" > "${f}.gz"
+            fi
+          done
+          ls -la output/*.gz || true
+          ls -la output/participants/*.gz || true
+
+      - name: Upload to FTP (gz only, robust)
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_REMOTE_DIR: ${{ secrets.FTP_REMOTE_DIR }}
+        run: |
+          set -e
+          if [ -z "$FTP_SERVER" ] || [ -z "$FTP_USERNAME" ] || [ -z "$FTP_PASSWORD" ] || [ -z "$FTP_REMOTE_DIR" ]; then
+            echo "Variables FTP no configuradas"; exit 1
+          fi
+          REMOTE_DIR="${FTP_REMOTE_DIR}/Competiciones/EventsPast/data"
+          BASE_URL="ftp://${FTP_SERVER}${REMOTE_DIR}"
+          echo "Subiendo a: ${BASE_URL}/"
+
+          upload() {
+            local SRC="$1" DST="$2"
+            for i in 1 2 3; do
+              curl --fail --ssl-reqd --ftp-create-dirs --disable-epsv --ftp-skip-pasv-ip \
+                   --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
+                   --upload-file "$SRC" \
+                   "${BASE_URL}/${DST}" && return 0
+              echo "Reintento $i falló subiendo ${SRC} → ${DST}; esperando…"
+              sleep 3
+            done
+            echo "Fallo subiendo ${SRC} → ${DST}"
+          }
+
+          # 01events (nuevo)
+          [ -f "./output/01events.json.gz" ] && upload "./output/01events_past.json.gz" "01events_past.json.gz"
+          [ -f "./output/01events.json" ]    && upload "./output/01events_past.json"    "01events_past.json"
+
+          # Agregados de participantes
+          [ -f "./output/02participants.json.gz" ]        && upload "./output/02participants.json.gz"        "02participants.json.gz"
+          [ -f "./output/02participants_debug.json.gz" ]  && upload "./output/02participants_debug.json.gz"  "02participants_debug.json.gz"
+
+          # Por evento
+          shopt -s nullglob
+          for f in ./output/participants/02p_*.json.gz; do
+            base=$(basename "$f")
+            upload "$f" "participants/${base}"
+          done
+
+      - name: Upload artifacts (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: fullscrape-json-${{ github.run_number }}
+          path: |
+            output/01events.json
+            output/01events.json.gz
+            output/02participants.json
+            output/02participants.json.gz
+            output/02participants_debug.json
+            output/02participants_debug.json.gz
+            output/participants/*.json
+            output/participants/*.json.gz
+          retention-days: 10
