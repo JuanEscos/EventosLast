@@ -48,9 +48,9 @@ jobs:
           FLOW_PASS:  ${{ secrets.FLOW_PASS }}
         run: |
           set -e
-          echo "=== Ejecutando 01EventosLast.py ==="
-          python ./01EventosLast.py
-          echo "=== Fin de 01EventosLast.py ==="
+          echo "=== Ejecutando 01EventosPast.py ==="
+          python ./01EventosPast.py
+          echo "=== Fin de 01EventosPast.py ==="
 
       - name: Verify output
         run: |
@@ -82,7 +82,7 @@ jobs:
           FTP_REMOTE_DIR_CLEAN="$(printf '%s' "$_rdir_raw" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's#/*$##')"
           [ -n "$FTP_REMOTE_DIR_CLEAN" ] && [ "${FTP_REMOTE_DIR_CLEAN#/}" = "$FTP_REMOTE_DIR_CLEAN" ] && FTP_REMOTE_DIR_CLEAN="/$FTP_REMOTE_DIR_CLEAN"
 
-          REMOTE_DIR="${FTP_REMOTE_DIR_CLEAN}/Competiciones/EventosLast/data"
+          REMOTE_DIR="${FTP_REMOTE_DIR_CLEAN}/Competiciones/Eventspast/data"
           BASE_URL="ftp://${FTP_SERVER_CLEAN}${REMOTE_DIR}"
 
           echo "Subiendo a: ${BASE_URL}/"
