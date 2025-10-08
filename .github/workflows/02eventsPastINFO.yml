@@ -1,4 +1,4 @@
-name: 02EventosPastInfo
+name: EventosPastMod1_2
 
 on:
   schedule:
@@ -82,7 +82,7 @@ jobs:
          MAX_RUNTIME_MIN: "25"     # parachute: cortar de forma ordenada a los 25'
       run: |
         echo "=== EJECUTANDO SCRAPER ==="
-        python ./02eventsPastINFO.py --module all
+        python ./EventosPastBeta.py --module all
         echo "=== SCRAPER COMPLETADO ==="
 
     - name: Verify generated files
@@ -145,7 +145,7 @@ jobs:
             exit 1
         fi
         
-        REMOTE_DIR="${FTP_REMOTE_DIR}/Competiciones/EventsPast/data"
+        REMOTE_DIR="${FTP_REMOTE_DIR}/Competiciones/EventosPast/data"
         BASE_URL="ftp://${FTP_SERVER}${REMOTE_DIR}"
         
         echo "Subiendo a: ${BASE_URL}/"
@@ -195,14 +195,14 @@ jobs:
             sleep 1
         done
         
-        # También intentar subir el 01events.json sin comprimir (siempre es pequeño)
+        # También intentar subir el 01events_past.json sin comprimir (siempre es pequeño)
         echo "📤 Subiendo 01events_past.json (sin comprimir)"
         curl --fail \
              --ssl-reqd \
              --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
              --upload-file "./output/01events_past.json" \
              "${BASE_URL}/01events_past.json" && \
-        echo "✅ 01events.json subido exitosamente" || \
+        echo "✅ 01events_past.json subido exitosamente" || \
         echo "⚠️  No se pudo subir 01events_past.json sin comprimir"
 
     - name: Create backup directory
