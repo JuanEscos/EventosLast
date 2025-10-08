@@ -154,7 +154,7 @@ jobs:
         base_dir="/${base_dir#/}"
         base_dir="${base_dir%/}"
 
-        remote_dir="${base_dir}/Competiciones/EventosPast/data"
+        remote_dir="${base_dir}/Competiciones/EventsPast/data"
 
         files=(
           "01events_past.json.gz"
