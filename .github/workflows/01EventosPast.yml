@@ -2,7 +2,7 @@ name: 01EventosPast
 
 on:
   schedule:
-    - cron: '1 4 * * *'   # Diario a las 04:01 UTC
+    - cron: '1 2 * * *'   # Diario a las 04:01 UTC
   workflow_dispatch:
 
 jobs:
