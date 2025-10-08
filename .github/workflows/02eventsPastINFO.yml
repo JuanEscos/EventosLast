@@ -130,80 +130,94 @@ jobs:
         echo "=== ARCHIVOS COMPRIMIDOS ==="
         ls -la ./output/*.gz
 
-    - name: Upload compressed files to FTP
-      env:
-        FTP_SERVER: ${{ secrets.FTP_SERVER }}
-        FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
-        FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-        FTP_REMOTE_DIR: ${{ secrets.FTP_REMOTE_DIR }}
-      run: |
-        echo '=== SUBIENDO ARCHIVOS COMPRIMIDOS ==='
-        
-        # Verificar que las variables estén configuradas
-        if [ -z "$FTP_SERVER" ] || [ -z "$FTP_USERNAME" ] || [ -z "$FTP_PASSWORD" ]; then
-            echo "❌ ERROR: Variables FTP no configuradas correctamente"
-            exit 1
-        fi
-        
-        REMOTE_DIR="${FTP_REMOTE_DIR}/Competiciones/EventosPast/data"
-        BASE_URL="ftp://${FTP_SERVER}${REMOTE_DIR}"
-        
-        echo "Subiendo a: ${BASE_URL}/"
-        
-        # Archivos comprimidos a subir
-        COMPRESSED_FILES=("01events_past.json.gz" "02events_pastINFO.json.gz")
-        
-        # Subir archivos comprimidos
-        for file in "${COMPRESSED_FILES[@]}"; do
-            local_file="./output/$file"
-            
-            if [ ! -f "$local_file" ]; then
-                echo "❌ Archivo comprimido $file no encontrado"
-                continue
-            fi
-            
-            echo "📤 Subiendo archivo comprimido: $file"
-            
-            # Subir archivo comprimido
-            curl --fail \
-                 --ssl-reqd \
-                 --ftp-create-dirs \
-                 --disable-epsv \
-                 --ftp-skip-pasv-ip \
-                 --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
-                 --upload-file "$local_file" \
-                 "${BASE_URL}/$file"
-            
-            if [ $? -eq 0 ]; then
-                echo "✅ $file subido exitosamente"
-            else
-                echo "❌ Error subiendo archivo comprimido $file"
-                
-                # Intentar subir el archivo original sin comprimir
-                original_file=${file%.gz}
-                echo "🔄 Intentando subir archivo original: $original_file"
-                
-                curl --fail \
-                     --ssl-reqd \
-                     --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
-                     --upload-file "./output/$original_file" \
-                     "${BASE_URL}/$original_file" && \
-                echo "✅ $original_file subido exitosamente" || \
-                echo "❌ Error subiendo $original_file también"
-            fi
-            
-            sleep 1
-        done
-        
-        # También intentar subir el 01events_past.json sin comprimir (siempre es pequeño)
-        echo "📤 Subiendo 01events_past.json (sin comprimir)"
-        curl --fail \
-             --ssl-reqd \
-             --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
-             --upload-file "./output/01events_past.json" \
-             "${BASE_URL}/01events_past.json" && \
-        echo "✅ 01events_past.json subido exitosamente" || \
-        echo "⚠️  No se pudo subir 01events_past.json sin comprimir"
+- name: Upload compressed files to FTP
+  env:
+    FTP_SERVER: ${{ secrets.FTP_SERVER }}      # ej: ftp.midominio.com (sin protocolo, sin / final)
+    FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+    FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+    FTP_REMOTE_DIR: ${{ secrets.FTP_REMOTE_DIR }}  # ej: /Competiciones (con / inicial, sin / final)
+  shell: bash
+  run: |
+    set -euo pipefail
+
+    echo '=== SUBIENDO ARCHIVOS COMPRIMIDOS ==='
+
+    # Comprobar credenciales
+    for v in FTP_SERVER FTP_USERNAME FTP_PASSWORD; do
+      if [ -z "${!v:-}" ]; then echo "❌ ERROR: \$${v} vacío"; exit 1; fi
+    done
+
+    # Normalizar host: quitar protocolo y barras finales, y eliminar saltos de línea/espacios
+    host="$(printf '%s' "${FTP_SERVER}" | tr -d '\r' | sed -e 's~^ftp[s]*://~~' -e 's~/*$~~' -e 's/[[:space:]]//g')"
+    if [ -z "$host" ]; then echo "❌ ERROR: host vacío tras normalizar"; exit 1; fi
+
+    # Normalizar directorio base: asegurar / inicial, sin / final, sin CR/LF
+    base_dir="$(printf '%s' "${FTP_REMOTE_DIR:-}" | tr -d '\r' | sed -e 's~\r~~g' -e 's~//*~/~g')"
+    base_dir="/${base_dir#/}"
+    base_dir="${base_dir%/}"
+
+    # Directorio final en el servidor
+    remote_dir="${base_dir}/Competiciones/EventosPast/data"
+
+    # Archivos a subir
+    files=(
+      "01events_past.json.gz"
+      "02events_pastINFO.json.gz"
+    )
+
+    # Subir cada archivo
+    for f in "${files[@]}"; do
+      local_file="./output/$f"
+      if [ ! -f "$local_file" ]; then
+        echo "❌ No existe: $local_file"
+        continue
+      fi
+
+      # URL final SIEMPRE en una sola línea y entre comillas
+      url="ftp://${host}${remote_dir}/$f"
+
+      echo "📤 Subiendo: $url"
+      curl --fail \
+           --ssl-reqd \
+           --ftp-create-dirs \
+           --disable-epsv \
+           --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
+           --upload-file "$local_file" \
+           "$url" \
+        && echo "✅ $f subido" \
+        || {
+          echo "❌ Error subiendo $f. Intento con el original sin comprimir…"
+          orig="${f%.gz}"
+          [ -f "./output/$orig" ] || { echo "⚠️  No existe ./output/$orig"; continue; }
+          url_orig="ftp://${host}${remote_dir}/$orig"
+          curl --fail \
+               --ssl-reqd \
+               --ftp-create-dirs \
+               --disable-epsv \
+               --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
+               --upload-file "./output/$orig" \
+               "$url_orig" \
+            && echo "✅ $orig subido" \
+            || echo "❌ También falló subir $orig"
+        }
+
+      sleep 1
+    done
+
+    # Subir además el 01events_past.json sin comprimir (opcional)
+    if [ -f "./output/01events_past.json" ]; then
+      url_plain="ftp://${host}${remote_dir}/01events_past.json"
+      echo "📤 Subiendo sin comprimir: $url_plain"
+      curl --fail \
+           --ssl-reqd \
+           --ftp-create-dirs \
+           --disable-epsv \
+           --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
+           --upload-file "./output/01events_past.json" \
+           "$url_plain" \
+        && echo "✅ 01events_past.json subido" \
+        || echo "⚠️  No se pudo subir 01events_past.json sin comprimir"
+    fi
 
     - name: Create backup directory
       run: mkdir -p ./backup
