@@ -114,7 +114,6 @@ jobs:
     - name: Compress JSON files for FTP
       run: |
         echo "=== COMPRIMIENDO ARCHIVOS PARA FTP ==="
-        
         # Comprimir archivos JSON con gzip (máxima compresión)
         for file in ./output/0*.json; do
             if [ -f "$file" ]; then
@@ -126,7 +125,6 @@ jobs:
                 echo "  ${original_size} bytes → ${compressed_size} bytes (${compression_ratio}%)"
             fi
         done
-        
         echo "=== ARCHIVOS COMPRIMIDOS ==="
         ls -la ./output/*.gz
 
