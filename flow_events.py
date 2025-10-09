@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
-FLOWAGILITY SCRAPER - SOLO EVENTOS (01events)
+FLOWAGILITY SCRAPER - SOLO EVENTOS (01events_past)
 - Login
 - Scroll completo y parseo estático con BeautifulSoup
-- Salida: 01events.json y 01events_YYYY-MM-DD.json en OUT_DIR
+- Salida: 01events_past.json y 01events_past_YYYY-MM-DD.json en OUT_DIR
 """
 
 import os
@@ -279,7 +279,7 @@ def extract_events():
     if not HAS_SELENIUM:
         log("Error: Selenium no está instalado"); return None
 
-    log("=== EXTRACCIÓN DE EVENTOS (01events) ===")
+    log("=== EXTRACCIÓN DE EVENTOS (01events_past) ===")
     driver = _get_driver(headless=HEADLESS)
     if not driver:
         log("❌ No se pudo crear el driver de Chrome"); return None
@@ -367,9 +367,9 @@ def extract_events():
 
         today_str = datetime.now().strftime("%Y-%m-%d")
         os.makedirs(OUT_DIR, exist_ok=True)
-        with open(os.path.join(OUT_DIR, f'01events_{today_str}.json'), 'w', encoding='utf-8') as f:
+        with open(os.path.join(OUT_DIR, f'01events_past_{today_str}.json'), 'w', encoding='utf-8') as f:
             json.dump(events, f, ensure_ascii=False, indent=2)
-        with open(os.path.join(OUT_DIR, '01events.json'), 'w', encoding='utf-8') as f:
+        with open(os.path.join(OUT_DIR, '01events_past.json'), 'w', encoding='utf-8') as f:
             json.dump(events, f, ensure_ascii=False, indent=2)
 
         log(f"✅ Extracción completada. {len(events)} eventos guardados")
@@ -401,7 +401,7 @@ def main():
             print(f"\n📁 ARCHIVOS GENERADOS EN {OUT_DIR}:")
             for name in sorted(os.listdir(OUT_DIR)):
                 path = os.path.join(OUT_DIR, name)
-                if os.path.isfile(path) and name.startswith("01events"):
+                if os.path.isfile(path) and name.startswith("01events_past"):
                     print(f"   {name} - {os.path.getsize(path)} bytes")
         return ok
     except Exception as e:
