@@ -18,8 +18,8 @@ from bs4 import BeautifulSoup
 # Configuración
 BASE = "https://www.flowagility.com"
 EVENTS_URL = "https://www.flowagility.com/zone/events/past"
-FLOW_EMAIL = "jescosq@gmail.com"
-FLOW_PASS = "Seattle1"
+FLOW_EMAIL = "rosanaperez1134@gmail.com"
+FLOW_PASS = "Seattle1134"
 HEADLESS = True
 INCOGNITO = True
 MAX_SCROLLS = 10
