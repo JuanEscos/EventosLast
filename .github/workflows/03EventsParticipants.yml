@@ -98,9 +98,9 @@ jobs:
           echo "=== FIN MÓDULO 1 ==="
           ls -la ./output || true
 
-      - name: Ensure 01events.json
+      - name: Ensure 01events_past.json
         run: |
-          if [ ! -f "./output/01events.json" ]; then
+          if [ ! -f "./output/01events_past.json" ]; then
             echo "❌ No se generó ./output/01events_past.json"
             exit 1
           fi
@@ -134,10 +134,10 @@ jobs:
               print("Ejemplo:", sample)
           PY
 
-      - name: Gzip outputs (incluye 01events)
+      - name: Gzip outputs (incluye 01events_past)
         run: |
           set -e
-          for f in output/01events.json output/02participants.json output/02participants_debug.json output/participants/*.json; do
+          for f in output/01events_past.json output/02participants.json output/02participants_debug.json output/participants/*.json; do
             if [ -f "$f" ]; then
               gzip -9 -c "$f" > "${f}.gz"
             fi
@@ -173,9 +173,9 @@ jobs:
             echo "Fallo subiendo ${SRC} → ${DST}"
           }
 
-          # 01events (nuevo)
-          [ -f "./output/01events.json.gz" ] && upload "./output/01events_past.json.gz" "01events_past.json.gz"
-          [ -f "./output/01events.json" ]    && upload "./output/01events_past.json"    "01events_past.json"
+          # 01events_past (nuevo)
+          [ -f "./output/01events_past.json.gz" ] && upload "./output/01events_past.json.gz" "01events_past.json.gz"
+          [ -f "./output/01events_past.json" ]    && upload "./output/01events_past.json"    "01events_past.json"
 
           # Agregados de participantes
           [ -f "./output/02participants.json.gz" ]        && upload "./output/02participants.json.gz"        "02participants.json.gz"
@@ -193,8 +193,8 @@ jobs:
         with:
           name: fullscrape-json-${{ github.run_number }}
           path: |
-            output/01events.json
-            output/01events.json.gz
+            output/01events_past.json
+            output/01events_past.json.gz
             output/02participants.json
             output/02participants.json.gz
             output/02participants_debug.json
