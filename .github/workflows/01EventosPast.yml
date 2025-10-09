@@ -41,7 +41,7 @@ jobs:
       - name: Prepare output dir
         run: mkdir -p ./output
 
-      - name: Run 01EventosLast.py
+      - name: Run 01EventosPast.py
         env:
           # (Opcional) Mueve credenciales a secrets y léelas en el script
           FLOW_EMAIL: ${{ secrets.FLOW_EMAIL }}
