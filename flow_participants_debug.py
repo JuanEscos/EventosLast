@@ -3,7 +3,7 @@
 
 """
 FLOWAGILITY SCRAPER - MÓDULO 2 (DEBUG v4 PID): PARTICIPANTES DETALLADOS
-- Lee ./output/01events_past.json
+- Lee ./output/01events.json
 - Para cada evento abre participants_list, detecta booking_id (PID),
   abre el panel (sin colapsar el primero si ya está abierto) y mapea campos.
 - Mapeo híbrido: JS (ES/EN) + BeautifulSoup (hermano fuerte) + fallback XPATH.
@@ -593,15 +593,15 @@ def main():
     Path(OUT_DIR).mkdir(parents=True, exist_ok=True)
     (Path(OUT_DIR)/"participants").mkdir(parents=True, exist_ok=True)
 
-    events_path = Path(OUT_DIR)/"01events_past.json"
+    events_path = Path(OUT_DIR)/"01events.json"
     if not events_path.exists():
-        log("❌ Falta ./output/01events_past.json")
+        log("❌ Falta ./output/01events.json")
         return False
 
     try:
         events = json.loads(events_path.read_text(encoding="utf-8"))
     except Exception as e:
-        log(f"❌ Error leyendo 01events_past.json: {e}")
+        log(f"❌ Error leyendo 01events.json: {e}")
         return False
 
     if LIMIT_EVENTS > 0:
