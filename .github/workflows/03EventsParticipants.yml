@@ -84,8 +84,8 @@ jobs:
       # ========= MÓDULO 1: EVENTOS (SIN LÍMITE) =========
       - name: Run Module 1 (events)
         env:
-          FLOW_EMAIL: ${{ secrets.FLOW_EMAILRQ }}
-          FLOW_PASS:  ${{ secrets.FLOW_PASSRQ }}
+          FLOW_EMAIL: ${{ secrets.FLOW_EMAIL }}
+          FLOW_PASS:  ${{ secrets.FLOW_PASS }}
           HEADLESS: "true"
           MAX_SCROLLS: "15"
           SCROLL_WAIT_S: "3.0"
@@ -156,7 +156,7 @@ jobs:
           if [ -z "$FTP_SERVER" ] || [ -z "$FTP_USERNAME" ] || [ -z "$FTP_PASSWORD" ] || [ -z "$FTP_REMOTE_DIR" ]; then
             echo "Variables FTP no configuradas"; exit 1
           fi
-          REMOTE_DIR="${FTP_REMOTE_DIR}/Competiciones/EventosProx/Flow/data"
+          REMOTE_DIR="${FTP_REMOTE_DIR}/Competiciones/EventsPast/data"
           BASE_URL="ftp://${FTP_SERVER}${REMOTE_DIR}"
           echo "Subiendo a: ${BASE_URL}/"
 
