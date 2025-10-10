@@ -4,7 +4,7 @@ on:
   schedule:
     - cron: '5 2 * * *'   # 02:05 UTC
     - cron: '5 4 * * *'   # 05:05 UTC
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 concurrency:
   group: eventos-full-scrape
@@ -14,7 +14,6 @@ jobs:
   full-scrape:
     runs-on: ubuntu-22.04
     timeout-minutes: 350
-
     env:
       TZ: Europe/Madrid
       OUT_DIR: ./output
@@ -40,7 +39,7 @@ jobs:
       # Debug enriquecido
       DEBUG_PARTICIPANTS: "1"
 
-      # --- Streamer versión A (puedes ajustar) ---
+      # Streamer Versión A
       SNAPSHOT_EVERY: "10"
       STREAM_EXTRA_SLEEP_MIN: "0"
       STREAM_EXTRA_SLEEP_MAX: "0"
@@ -56,6 +55,7 @@ jobs:
           cache: 'pip'
 
       - name: Install Chrome & ChromeDriver
+        shell: bash
         run: |
           set -e
           sudo apt-get update
@@ -79,14 +79,16 @@ jobs:
           which chromedriver && chromedriver --version
 
       - name: Install Python deps
+        shell: bash
         run: |
           python -m pip install --upgrade pip
           pip install selenium beautifulsoup4 python-dotenv lxml requests webdriver-manager
 
       - name: Prepare output dirs
+        shell: bash
         run: mkdir -p "${OUT_DIR}" "${OUT_DIR}/participants"
 
-      # ====== Crea uploader por archivo (usado por flow_events.py Versión A) ======
+      # ========== Uploader por archivo (usado por flow_events.py) ==========
       - name: Create per-file uploader script
         shell: bash
         run: |
@@ -139,34 +141,34 @@ sleep "$SLEEP_BETWEEN"
 EOF
           chmod +x scripts/upload_event.sh
 
-      # ====== Exporta y SANEa variables FTP para Python/uploader ======
+      # ========== Export & sanitize FTP vars ==========
       - name: Export & sanitize FTP vars for uploader
         shell: bash
         env:
           FTP_SERVER:   ${{ secrets.FTP_SERVER }}
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-          FTP_REMOTE_DIR_SEC: ${{ secrets.FTP_REMOTE_DIR }}  # puede venir con CR/LF
+          FTP_REMOTE_DIR_SEC: ${{ secrets.FTP_REMOTE_DIR }}
         run: |
           set -euo pipefail
-          # Compacta multi-línea y limpia CR/LF + espacios extremos:
           CLEAN_DIR="$(printf '%s' "${FTP_REMOTE_DIR_SEC:-/}" | tr -d '\r' | sed 's/^[ \t]\+//; s/[ \t]\+$//' | tr -d '\n')"
-          echo "FTP_SCHEME=ftp"                >> $GITHUB_ENV
-          echo "FTP_HOST=${FTP_SERVER}"        >> $GITHUB_ENV
-          echo "FTP_USER=${FTP_USERNAME}"      >> $GITHUB_ENV
-          echo "FTP_PASS=${FTP_PASSWORD}"      >> $GITHUB_ENV
-          echo "FTP_REMOTE_DIR=${CLEAN_DIR}"   >> $GITHUB_ENV
-          echo "SLEEP_BETWEEN=2"               >> $GITHUB_ENV   # pausa entre subidas (ajusta si quieres)
+          echo "FTP_SCHEME=ftp" >> $GITHUB_ENV
+          echo "FTP_HOST=${FTP_SERVER}" >> $GITHUB_ENV
+          echo "FTP_USER=${FTP_USERNAME}" >> $GITHUB_ENV
+          echo "FTP_PASS=${FTP_PASSWORD}" >> $GITHUB_ENV
+          echo "FTP_REMOTE_DIR=${CLEAN_DIR}" >> $GITHUB_ENV
+          echo "SLEEP_BETWEEN=2" >> $GITHUB_ENV
 
       # ========= MÓDULO 1: EVENTOS (SIN LÍMITE) =========
       - name: Run Module 1 (events)
+        shell: bash
         env:
           FLOW_EMAIL: ${{ secrets.FLOW_EMAIL }}
           FLOW_PASS:  ${{ secrets.FLOW_PASS }}
           HEADLESS: "true"
           MAX_SCROLLS: "15"
           SCROLL_WAIT_S: "3.0"
-          LIMIT_EVENTS: "0"     # 0 = sin límite
+          LIMIT_EVENTS: "0"
           OUT_DIR: "./output"
         run: |
           echo "=== MÓDULO 1: EXTRACCIÓN DE EVENTOS ==="
@@ -175,6 +177,7 @@ EOF
           ls -la ./output || true
 
       - name: Ensure 01events.json
+        shell: bash
         run: |
           if [ ! -f "./output/01events.json" ]; then
             echo "❌ No se generó ./output/01events.json"
@@ -185,6 +188,7 @@ EOF
 
       # ========= MÓDULO 2: PARTICIPANTES (TODOS) =========
       - name: Run Module 2 (participants, full)
+        shell: bash
         env:
           FLOW_EMAIL: ${{ secrets.FLOW_EMAIL }}
           FLOW_PASS:  ${{ secrets.FLOW_PASS }}
@@ -196,6 +200,7 @@ EOF
           ls -la ./output/participants || true
 
       - name: Sanity check JSON
+        shell: bash
         run: |
           python - <<'PY'
           import json, pathlib, sys
@@ -209,16 +214,15 @@ EOF
               print("Ejemplo:", sample)
           PY
 
-      - name: Gzip outputs (incluye 01events y stream)
+      - name: Gzip outputs (incluye stream)
+        shell: bash
         run: |
           set -e
-          # gzip habituales
           for f in output/01events.json output/02participants.json output/02participants_debug.json output/participants/*.json; do
             if [ -f "$f" ]; then
               gzip -9 -c "$f" > "${f}.gz"
             fi
           done
-          # gzip del stream vivo (una copia; tus snapshots ya salen .gz desde Python)
           if [ -f "output/events_stream.jsonl" ]; then
             gzip -9 -c "output/events_stream.jsonl" > "output/events_stream.jsonl.gz"
           fi
@@ -230,13 +234,11 @@ EOF
         run: |
           set -euo pipefail
 
-          # Asegurar que las env mínimas existen:
           for v in FTP_HOST FTP_USER FTP_PASS FTP_REMOTE_DIR; do
             [ -z "${!v:-}" ] && { echo "❌ Falta $v"; exit 1; }
           done
 
-          # Normaliza ruta
-          REMOTE_DIR="$FTP_REMOTE_DIR/Competiciones/EventsPast/data"
+          REMOTE_DIR="${FTP_REMOTE_DIR}/Competiciones/EventsPast/data"
           case "$REMOTE_DIR" in
             /*) : ;;
             *) REMOTE_DIR="/$REMOTE_DIR" ;;
@@ -263,29 +265,21 @@ EOF
           }
 
           ok=0
-
-          # 01events (json + gz)
           upload "./output/01events.json.gz" "01events.json.gz" || ok=1
           upload "./output/01events.json"    "01events.json"    || ok=1
-
-          # Agregados de participantes
           upload "./output/02participants.json.gz"       "02participants.json.gz"       || ok=1
           upload "./output/02participants_debug.json.gz" "02participants_debug.json.gz" || ok=1
 
-          # Stream vivo del día y copia gzip
-          # (El nombre 'vivo' lo sube el uploader por evento; aquí subimos por si el script no pudo)
           DAY=$(date +%Y%m%d)
-          upload "./output/events_stream.jsonl"      "events_stream_${DAY}.jsonl"     || ok=1
-          upload "./output/events_stream.jsonl.gz"   "events_stream_${DAY}.jsonl.gz"  || ok=1
+          upload "./output/events_stream.jsonl"    "events_stream_${DAY}.jsonl"    || ok=1
+          upload "./output/events_stream.jsonl.gz" "events_stream_${DAY}.jsonl.gz" || ok=1
 
-          # Snapshots generados por Python (events_stream_YYYYMMDD_HHMMSS.jsonl.gz)
           shopt -s nullglob
           for f in ./output/events_stream_*.jsonl.gz; do
             base=$(basename "$f")
             upload "$f" "$base" || ok=1
           done
 
-          # Por evento (participants)
           for f in ./output/participants/02p_*.json.gz; do
             base=$(basename "$f")
             upload "$f" "participants/${base}" || ok=1
