@@ -6,6 +6,7 @@ FLOWAGILITY SCRAPER - SOLO EVENTOS (01events)
 - Login
 - Scroll completo y parseo estático con BeautifulSoup
 - Salida: 01events.json y 01events_YYYY-MM-DD.json en OUT_DIR
+- Versión A añadida: stream JSONL incremental + snapshots gzip periódicos + subida por evento
 """
 
 import os
@@ -16,9 +17,12 @@ import time
 import traceback
 import unicodedata
 import random
+import gzip
+import subprocess
 from datetime import datetime
 from urllib.parse import urljoin
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 # Third-party imports
 try:
@@ -273,6 +277,94 @@ def _full_scroll(driver):
             break
         last_h = new_h
 
+# ============================== STREAMER (Versión A) ==============================
+
+OUT_DIR_PATH = Path(OUT_DIR)
+STREAM_FILE = OUT_DIR_PATH / "events_stream.jsonl"
+SNAPSHOT_EVERY = int(os.getenv("SNAPSHOT_EVERY", "10"))  # snapshot cada N eventos
+EXTRA_SLEEP_MIN = float(os.getenv("STREAM_EXTRA_SLEEP_MIN", "0"))  # latencia extra opcional
+EXTRA_SLEEP_MAX = float(os.getenv("STREAM_EXTRA_SLEEP_MAX", "0"))
+
+STRICT_MISSING_UPLOADER = False  # si True, fallará si no existe scripts/upload_event.sh
+
+def _ts_day() -> str:
+    return time.strftime("%Y%m%d")
+
+def _ts_full() -> str:
+    return time.strftime("%Y%m%d_%H%M%S")
+
+def _safe_run(cmd: list[str], env: Optional[dict] = None) -> int:
+    try:
+        proc = subprocess.run(cmd, check=False, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if proc.returncode != 0:
+            print(f"⚠️  Uploader devolvió código {proc.returncode}\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
+        return proc.returncode
+    except Exception as e:
+        print(f"⚠️  Error ejecutando {' '.join(cmd)}: {e}")
+        return 1
+
+class EventStreamer:
+    def __init__(self, out_dir: Path = OUT_DIR_PATH, stream_file: Path = STREAM_FILE,
+                 snapshot_every: int = SNAPSHOT_EVERY) -> None:
+        self.out_dir = out_dir
+        self.stream_file = stream_file
+        self.snapshot_every = max(1, int(snapshot_every))
+        self.count = 0
+
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+        if not self.stream_file.exists():
+            self.stream_file.touch()
+
+        self.uploader = Path("scripts/upload_event.sh")
+        if not self.uploader.exists():
+            msg = "Uploader scripts/upload_event.sh no encontrado"
+            if STRICT_MISSING_UPLOADER:
+                raise FileNotFoundError(msg)
+            else:
+                print(f"ℹ️ {msg}. Se continuará sin subir.")
+
+    def _upload_stream(self) -> None:
+        if not self.uploader.exists():
+            return
+        remote_name = f"events_stream_{_ts_day()}.jsonl"
+        _safe_run(["bash", str(self.uploader), str(self.stream_file), remote_name])
+
+    def _make_snapshot(self) -> Path:
+        snap_path = self.out_dir / f"events_stream_{_ts_full()}.jsonl.gz"
+        with gzip.open(snap_path, "wb") as gz, self.stream_file.open("rb") as fr:
+            gz.write(fr.read())
+        return snap_path
+
+    def _upload_snapshot(self, snap_path: Path) -> None:
+        if not self.uploader.exists():
+            return
+        _safe_run(["bash", str(self.uploader), str(snap_path), snap_path.name])
+
+    def add(self, event: Dict[str, Any]) -> None:
+        with self.stream_file.open("a", encoding="utf-8") as fw:
+            fw.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+        self.count += 1
+
+        # Subida del stream vivo
+        self._upload_stream()
+
+        # Snapshot periódico
+        if self.count % self.snapshot_every == 0:
+            snap = self._make_snapshot()
+            self._upload_snapshot(snap)
+
+        # Latencia adicional opcional
+        if EXTRA_SLEEP_MAX > 0:
+            time.sleep(random.uniform(EXTRA_SLEEP_MIN, EXTRA_SLEEP_MAX))
+
+    def finish(self) -> None:
+        try:
+            snap = self._make_snapshot()
+            self._upload_snapshot(snap)
+        except Exception as e:
+            print(f"⚠️  No se pudo generar/subir snapshot final: {e}")
+
 # ============================== EXTRACCIÓN DE EVENTOS ==============================
 
 def extract_events():
@@ -283,6 +375,8 @@ def extract_events():
     driver = _get_driver(headless=HEADLESS)
     if not driver:
         log("❌ No se pudo crear el driver de Chrome"); return None
+
+    streamer = EventStreamer()  # ← Versión A: streamer incremental
 
     try:
         if not _login(driver):
@@ -361,6 +455,12 @@ def extract_events():
 
                 events.append(ev)
                 log(f"✅ Evento {i} procesado: {ev.get('nombre', 'Sin nombre')}")
+                # ===== Versión A: añadir al stream y subir incrementalmente =====
+                try:
+                    streamer.add(ev)
+                except Exception as e:
+                    log(f"⚠️  No se pudo añadir/subir evento {i} al stream: {e}")
+
             except Exception as e:
                 log(f"❌ Error procesando evento {i}: {e}")
                 continue
@@ -371,6 +471,12 @@ def extract_events():
             json.dump(events, f, ensure_ascii=False, indent=2)
         with open(os.path.join(OUT_DIR, '01events.json'), 'w', encoding='utf-8') as f:
             json.dump(events, f, ensure_ascii=False, indent=2)
+
+        # Snapshot final por si el bucle no cayó en múltiplo de SNAPSHOT_EVERY
+        try:
+            streamer.finish()
+        except Exception as e:
+            log(f"⚠️  No se pudo completar snapshot final: {e}")
 
         log(f"✅ Extracción completada. {len(events)} eventos guardados")
         return events
@@ -403,6 +509,10 @@ def main():
                 path = os.path.join(OUT_DIR, name)
                 if os.path.isfile(path) and name.startswith("01events"):
                     print(f"   {name} - {os.path.getsize(path)} bytes")
+            # Además, mostrará events_stream.jsonl y snapshots si existen
+            stream_path = STREAM_FILE
+            if stream_path.exists():
+                print(f"   {stream_path.name} - {stream_path.stat().st_size} bytes")
         return ok
     except Exception as e:
         log(f"❌ ERROR CRÍTICO: {e}")
