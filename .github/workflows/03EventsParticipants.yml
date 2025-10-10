@@ -40,6 +40,11 @@ jobs:
       # Debug enriquecido
       DEBUG_PARTICIPANTS: "1"
 
+      # --- Streamer versión A (puedes ajustar) ---
+      SNAPSHOT_EVERY: "10"
+      STREAM_EXTRA_SLEEP_MIN: "0"
+      STREAM_EXTRA_SLEEP_MAX: "0"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -81,6 +86,78 @@ jobs:
       - name: Prepare output dirs
         run: mkdir -p "${OUT_DIR}" "${OUT_DIR}/participants"
 
+      # ====== Crea uploader por archivo (usado por flow_events.py Versión A) ======
+      - name: Create per-file uploader script
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p scripts
+          cat > scripts/upload_event.sh <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+LOCAL_PATH="${1:-}"
+REMOTE_NAME="${2:-}"
+
+FTP_SCHEME="${FTP_SCHEME:-ftp}"               # ftp | ftps | sftp
+FTP_HOST="${FTP_HOST:-}"
+FTP_USER="${FTP_USER:-}"
+FTP_PASS="${FTP_PASS:-}"
+FTP_REMOTE_DIR="${FTP_REMOTE_DIR:-/}"
+SLEEP_BETWEEN="${SLEEP_BETWEEN:-2}"           # segundos entre subidas
+
+trim_one(){ printf '%s' "$1" | tr -d '\r' | sed 's/^[ \t]\+//; s/[ \t]\+$//' ; }
+trim_all_lines(){ tr -d '\r' | sed 's/^[ \t]\+//; s/[ \t]\+$//' | tr -d '\n'; }
+
+FTP_SCHEME="$(trim_one "$FTP_SCHEME")"
+FTP_HOST="$(trim_one "$FTP_HOST")"
+FTP_USER="$(trim_one "$FTP_USER")"
+FTP_PASS="$(trim_one "$FTP_PASS")"
+FTP_REMOTE_DIR="$(printf '%s' "$FTP_REMOTE_DIR" | trim_all_lines)"
+
+[[ -z "$LOCAL_PATH" || -z "$REMOTE_NAME" ]] && { echo "Uso: upload_event.sh <local_path> <remote_name>"; exit 2; }
+[[ ! -f "$LOCAL_PATH" ]] && { echo "ℹ️ No existe $LOCAL_PATH; se omite."; exit 0; }
+for v in FTP_HOST FTP_USER FTP_PASS; do [[ -z "${!v}" ]] && { echo "❌ Falta \$${v}"; exit 1; }; done
+
+[[ "$FTP_REMOTE_DIR" != /* ]] && FTP_REMOTE_DIR="/$FTP_REMOTE_DIR"
+FTP_REMOTE_DIR="$(printf '%s' "$FTP_REMOTE_DIR" | sed 's://*:/:g; s:/*$::')"
+
+URL_BASE="${FTP_SCHEME}://${FTP_HOST}${FTP_REMOTE_DIR}"
+URL_FILE="${URL_BASE}/${REMOTE_NAME}"
+
+CURL_OPTS=( -sS --fail --show-error --retry 3 --retry-delay 2 --user "$FTP_USER:$FTP_PASS" )
+case "$FTP_SCHEME" in
+  ftp|ftps) CURL_OPTS+=( --ftp-method nocwd --ftp-create-dirs ) ;;
+  sftp)     : ;;
+  *) echo "❌ Esquema no soportado: $FTP_SCHEME"; exit 1 ;;
+esac
+
+echo "⬆️  ${LOCAL_PATH} → ${URL_FILE}"
+curl "${CURL_OPTS[@]}" -T "$LOCAL_PATH" "$URL_FILE"
+echo "✅ Subido: ${REMOTE_NAME}"
+sleep "$SLEEP_BETWEEN"
+EOF
+          chmod +x scripts/upload_event.sh
+
+      # ====== Exporta y SANEa variables FTP para Python/uploader ======
+      - name: Export & sanitize FTP vars for uploader
+        shell: bash
+        env:
+          FTP_SERVER:   ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_REMOTE_DIR_SEC: ${{ secrets.FTP_REMOTE_DIR }}  # puede venir con CR/LF
+        run: |
+          set -euo pipefail
+          # Compacta multi-línea y limpia CR/LF + espacios extremos:
+          CLEAN_DIR="$(printf '%s' "${FTP_REMOTE_DIR_SEC:-/}" | tr -d '\r' | sed 's/^[ \t]\+//; s/[ \t]\+$//' | tr -d '\n')"
+          echo "FTP_SCHEME=ftp"                >> $GITHUB_ENV
+          echo "FTP_HOST=${FTP_SERVER}"        >> $GITHUB_ENV
+          echo "FTP_USER=${FTP_USERNAME}"      >> $GITHUB_ENV
+          echo "FTP_PASS=${FTP_PASSWORD}"      >> $GITHUB_ENV
+          echo "FTP_REMOTE_DIR=${CLEAN_DIR}"   >> $GITHUB_ENV
+          echo "SLEEP_BETWEEN=2"               >> $GITHUB_ENV   # pausa entre subidas (ajusta si quieres)
+
       # ========= MÓDULO 1: EVENTOS (SIN LÍMITE) =========
       - name: Run Module 1 (events)
         env:
@@ -93,7 +170,6 @@ jobs:
           OUT_DIR: "./output"
         run: |
           echo "=== MÓDULO 1: EXTRACCIÓN DE EVENTOS ==="
-          # Cambia el nombre del script si el tuyo es distinto:
           python ./flow_events.py --module events
           echo "=== FIN MÓDULO 1 ==="
           ls -la ./output || true
@@ -114,7 +190,6 @@ jobs:
           FLOW_PASS:  ${{ secrets.FLOW_PASS }}
         run: |
           echo "=== MÓDULO 2: PARTICIPANTES (FULL) ==="
-          # Script v4.x que te pasé: flow_participants_debug.py
           python ./flow_participants_debug.py
           echo "=== FIN MÓDULO 2 ==="
           ls -la ./output || true
@@ -134,61 +209,92 @@ jobs:
               print("Ejemplo:", sample)
           PY
 
-      - name: Gzip outputs (incluye 01events)
+      - name: Gzip outputs (incluye 01events y stream)
         run: |
           set -e
+          # gzip habituales
           for f in output/01events.json output/02participants.json output/02participants_debug.json output/participants/*.json; do
             if [ -f "$f" ]; then
               gzip -9 -c "$f" > "${f}.gz"
             fi
           done
+          # gzip del stream vivo (una copia; tus snapshots ya salen .gz desde Python)
+          if [ -f "output/events_stream.jsonl" ]; then
+            gzip -9 -c "output/events_stream.jsonl" > "output/events_stream.jsonl.gz"
+          fi
           ls -la output/*.gz || true
           ls -la output/participants/*.gz || true
 
-      - name: Upload to FTP (gz only, robust)
-        env:
-          FTP_SERVER: ${{ secrets.FTP_SERVER }}
-          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
-          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-          FTP_REMOTE_DIR: ${{ secrets.FTP_REMOTE_DIR }}
+      - name: Upload to FTP (robusto; incluye stream y snapshots)
+        shell: bash
         run: |
-          set -e
-          if [ -z "$FTP_SERVER" ] || [ -z "$FTP_USERNAME" ] || [ -z "$FTP_PASSWORD" ] || [ -z "$FTP_REMOTE_DIR" ]; then
-            echo "Variables FTP no configuradas"; exit 1
-          fi
-          REMOTE_DIR="${FTP_REMOTE_DIR}/Competiciones/EventsPast/data"
-          BASE_URL="ftp://${FTP_SERVER}${REMOTE_DIR}"
-          echo "Subiendo a: ${BASE_URL}/"
+          set -euo pipefail
+
+          # Asegurar que las env mínimas existen:
+          for v in FTP_HOST FTP_USER FTP_PASS FTP_REMOTE_DIR; do
+            [ -z "${!v:-}" ] && { echo "❌ Falta $v"; exit 1; }
+          done
+
+          # Normaliza ruta
+          REMOTE_DIR="$FTP_REMOTE_DIR/Competiciones/EventsPast/data"
+          case "$REMOTE_DIR" in
+            /*) : ;;
+            *) REMOTE_DIR="/$REMOTE_DIR" ;;
+          esac
+          REMOTE_DIR="$(printf '%s' "$REMOTE_DIR" | sed 's://*:/:g; s:/*$::')"
+
+          BASE_URL="ftp://${FTP_HOST}${REMOTE_DIR}"
+          echo "📡 Subiendo a: ${BASE_URL}/"
 
           upload() {
             local SRC="$1" DST="$2"
+            [ -f "$SRC" ] || { echo "ℹ️ No existe $SRC, se omite."; return 0; }
             for i in 1 2 3; do
-              curl --fail --ssl-reqd --ftp-create-dirs --disable-epsv --ftp-skip-pasv-ip \
-                   --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
-                   --upload-file "$SRC" \
-                   "${BASE_URL}/${DST}" && return 0
+              if curl -sS --fail --show-error --ftp-method nocwd --ftp-create-dirs \
+                       --user "${FTP_USER}:${FTP_PASS}" \
+                       -T "$SRC" "${BASE_URL}/${DST}"; then
+                echo "✅ OK: $DST"
+                return 0
+              fi
               echo "Reintento $i falló subiendo ${SRC} → ${DST}; esperando…"
               sleep 3
             done
-            echo "Fallo subiendo ${SRC} → ${DST}"
+            echo "❌ Fallo subiendo ${SRC} → ${DST}"; return 1
           }
 
-          # 01events (nuevo)
-          [ -f "./output/01events.json.gz" ] && upload "./output/01events.json.gz" "01events.json.gz"
-          [ -f "./output/01events.json" ]    && upload "./output/01events.json"    "01events.json"
+          ok=0
+
+          # 01events (json + gz)
+          upload "./output/01events.json.gz" "01events.json.gz" || ok=1
+          upload "./output/01events.json"    "01events.json"    || ok=1
 
           # Agregados de participantes
-          [ -f "./output/02participants.json.gz" ]        && upload "./output/02participants.json.gz"        "02participants.json.gz"
-          [ -f "./output/02participants_debug.json.gz" ]  && upload "./output/02participants_debug.json.gz"  "02participants_debug.json.gz"
+          upload "./output/02participants.json.gz"       "02participants.json.gz"       || ok=1
+          upload "./output/02participants_debug.json.gz" "02participants_debug.json.gz" || ok=1
 
-          # Por evento
+          # Stream vivo del día y copia gzip
+          # (El nombre 'vivo' lo sube el uploader por evento; aquí subimos por si el script no pudo)
+          DAY=$(date +%Y%m%d)
+          upload "./output/events_stream.jsonl"      "events_stream_${DAY}.jsonl"     || ok=1
+          upload "./output/events_stream.jsonl.gz"   "events_stream_${DAY}.jsonl.gz"  || ok=1
+
+          # Snapshots generados por Python (events_stream_YYYYMMDD_HHMMSS.jsonl.gz)
           shopt -s nullglob
-          for f in ./output/participants/02p_*.json.gz; do
+          for f in ./output/events_stream_*.jsonl.gz; do
             base=$(basename "$f")
-            upload "$f" "participants/${base}"
+            upload "$f" "$base" || ok=1
           done
 
+          # Por evento (participants)
+          for f in ./output/participants/02p_*.json.gz; do
+            base=$(basename "$f")
+            upload "$f" "participants/${base}" || ok=1
+          done
+
+          exit $ok
+
       - name: Upload artifacts (backup)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fullscrape-json-${{ github.run_number }}
@@ -199,6 +305,11 @@ jobs:
             output/02participants.json.gz
             output/02participants_debug.json
             output/02participants_debug.json.gz
+            output/events_stream.jsonl
+            output/events_stream.jsonl.gz
+            output/events_stream_*.jsonl.gz
             output/participants/*.json
             output/participants/*.json.gz
           retention-days: 10
+          compression-level: 9
+          if-no-files-found: warn
