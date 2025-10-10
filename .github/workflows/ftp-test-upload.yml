@@ -1,0 +1,124 @@
+name: FTP Test Upload
+
+on:
+  workflow_dispatch:
+    inputs:
+      local_path:
+        description: "Ruta local del archivo a subir (por defecto crea /tmp/ftp_probe.txt)"
+        required: false
+        default: ""
+      remote_name:
+        description: "Nombre de archivo remoto (por defecto igual al basename de local_path o ftp_probe.txt)"
+        required: false
+        default: ""
+
+jobs:
+  ftp-upload:
+    runs-on: ubuntu-24.04
+    env:
+      # Protocolo: ftp | ftps | sftp
+      FTP_SCHEME: ftp
+
+      # 👇 Tu ruta con salto de línea (se normaliza en el script)
+      FTP_REMOTE_DIR: |
+        /www/NewWeb/Privado
+        /Competiciones/EventsPast/data
+
+      # Secrets renombrados
+      FTP_HOST: ${{ secrets.FTP_SERVER }}
+      FTP_USER: ${{ secrets.FTP_USERNAME }}
+      FTP_PASS: ${{ secrets.FTP_PASSWORD }}
+
+    steps:
+      - name: Preparar archivo local (si no se pasa input)
+        id: prep
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Entrada del usuario
+          IN_PATH="${{ github.event.inputs.local_path }}"
+          IN_NAME="${{ github.event.inputs.remote_name }}"
+
+          if [ -z "$IN_PATH" ]; then
+            echo "No se pasó local_path → crearé un archivo de prueba /tmp/ftp_probe.txt"
+            echo "FTP probe $(date -u +%F_%T) from $GITHUB_REPOSITORY" > /tmp/ftp_probe.txt
+            LOCAL_PATH="/tmp/ftp_probe.txt"
+          else
+            LOCAL_PATH="$IN_PATH"
+          fi
+
+          if [ -z "$IN_NAME" ]; then
+            REMOTE_NAME="$(basename "$LOCAL_PATH" 2>/dev/null || echo ftp_probe.txt)"
+          else
+            REMOTE_NAME="$IN_NAME"
+          fi
+
+          if [ ! -f "$LOCAL_PATH" ]; then
+            echo "❌ El archivo local no existe: $LOCAL_PATH"
+            exit 1
+          fi
+
+          echo "LOCAL_PATH=$LOCAL_PATH"   >> "$GITHUB_OUTPUT"
+          echo "REMOTE_NAME=$REMOTE_NAME" >> "$GITHUB_OUTPUT"
+          echo "📄 Usaremos: LOCAL_PATH=$LOCAL_PATH  →  REMOTE_NAME=$REMOTE_NAME"
+
+      - name: Subir por FTP con saneado de variables
+        shell: bash
+        env:
+          LOCAL_PATH:  ${{ steps.prep.outputs.LOCAL_PATH }}
+          REMOTE_NAME: ${{ steps.prep.outputs.REMOTE_NAME }}
+        run: |
+          set -euo pipefail
+
+          # --- Funciones de limpieza/normalización ---
+          trim_all_lines() {  # quita CR y espacios extremos de cada línea, y concatena sin saltos
+            # 1) elimina CR \r, 2) trim por línea, 3) concatena líneas
+            tr -d '\r' | sed 's/^[ \t]\+//; s/[ \t]\+$//' | tr -d '\n'
+          }
+          trim_one() { printf '%s' "$1" | tr -d '\r' | sed 's/^[ \t]\+//; s/[ \t]\+$//' ; }
+
+          FTP_SCHEME="$(trim_one "${FTP_SCHEME:-ftp}")"
+          FTP_HOST="$(trim_one "${FTP_HOST:-}")"
+          FTP_USER="$(trim_one "${FTP_USER:-}")"
+          FTP_PASS="$(trim_one "${FTP_PASS:-}")"
+
+          # 👇 Aquí limpiamos la ruta remota multi-línea
+          FTP_REMOTE_DIR_CLEAN="$(printf '%s' "${FTP_REMOTE_DIR:-/}" | trim_all_lines)"
+
+          # Validaciones básicas
+          for v in FTP_HOST FTP_USER FTP_PASS; do
+            [ -z "${!v}" ] && { echo "❌ Falta \$${v} (revisa Secrets)"; exit 1; }
+          done
+          [ -z "${FTP_REMOTE_DIR_CLEAN}" ] && FTP_REMOTE_DIR_CLEAN="/"
+
+          # Asegura que empiece por / y sin barras duplicadas ni barra final
+          case "$FTP_REMOTE_DIR_CLEAN" in
+            /*) : ;;
+            *) FTP_REMOTE_DIR_CLEAN="/$FTP_REMOTE_DIR_CLEAN" ;;
+          esac
+          FTP_REMOTE_DIR_NORM="$(printf '%s' "$FTP_REMOTE_DIR_CLEAN" | sed 's://*:/:g; s:/*$::')"
+
+          echo "📡 Destino: ${FTP_SCHEME}://${FTP_HOST}${FTP_REMOTE_DIR_NORM}/"
+
+          # Opciones curl
+          CURL_OPTS=( -sS --fail --show-error --retry 3 --retry-delay 2 --user "$FTP_USER:$FTP_PASS" )
+          case "$FTP_SCHEME" in
+            ftp|ftps) CURL_OPTS+=( --ftp-method nocwd --ftp-create-dirs ) ;;
+            sftp)     : ;; # sftp no crea directorios automáticamente
+            *) echo "❌ Esquema no soportado: $FTP_SCHEME"; exit 1 ;;
+          esac
+
+          # Subida
+          URL_BASE="${FTP_SCHEME}://${FTP_HOST}${FTP_REMOTE_DIR_NORM}"
+          URL_FILE="${URL_BASE}/${REMOTE_NAME}"
+          echo "⬆️  Subiendo $LOCAL_PATH → $URL_FILE"
+          curl "${CURL_OPTS[@]}" -T "$LOCAL_PATH" "$URL_FILE"
+          echo "✅ Subida OK"
+
+          # Listado para verificar
+          echo "📁 Listando ${URL_BASE}/"
+          if curl -sS --fail --show-error --user "$FTP_USER:$FTP_PASS" --ftp-method nocwd --list-only "${URL_BASE}/" | sed -n "1,50p"; then
+            echo "✅ Listado OK"
+          else
+            echo "⚠️ No se pudo listar (puede estar bloqueado en el servidor), pero la subida fue correcta."
+          fi
