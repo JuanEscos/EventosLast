@@ -1,9 +1,9 @@
-name: 03EventsParticipantes
+name: 03EventsPart
 
 on:
   schedule:
     - cron: '5 2 * * *'   # 02:05 UTC
-    - cron: '5 5 * * *'   # 05:05 UTC
+    - cron: '5 4 * * *'   # 05:05 UTC
   workflow_dispatch: {}
 
 concurrency:
@@ -84,8 +84,8 @@ jobs:
       # ========= MÓDULO 1: EVENTOS (SIN LÍMITE) =========
       - name: Run Module 1 (events)
         env:
-          FLOW_EMAIL: ${{ secrets.FLOW_EMAIL }}
-          FLOW_PASS:  ${{ secrets.FLOW_PASS }}
+          FLOW_EMAIL: ${{ secrets.FLOW_EMAILRQ }}
+          FLOW_PASS:  ${{ secrets.FLOW_PASSRQ }}
           HEADLESS: "true"
           MAX_SCROLLS: "15"
           SCROLL_WAIT_S: "3.0"
@@ -98,14 +98,14 @@ jobs:
           echo "=== FIN MÓDULO 1 ==="
           ls -la ./output || true
 
-      - name: Ensure 01events_past.json
+      - name: Ensure 01events.json
         run: |
-          if [ ! -f "./output/01events_past.json" ]; then
-            echo "❌ No se generó ./output/01events_past.json"
+          if [ ! -f "./output/01events.json" ]; then
+            echo "❌ No se generó ./output/01events.json"
             exit 1
           fi
-          echo "✅ Encontrado 01events_past.json"
-          ls -la ./output/01events_past.json
+          echo "✅ Encontrado 01events.json"
+          ls -la ./output/01events.json
 
       # ========= MÓDULO 2: PARTICIPANTES (TODOS) =========
       - name: Run Module 2 (participants, full)
@@ -134,10 +134,10 @@ jobs:
               print("Ejemplo:", sample)
           PY
 
-      - name: Gzip outputs (incluye 01events_past)
+      - name: Gzip outputs (incluye 01events)
         run: |
           set -e
-          for f in output/01events_past.json output/02participants.json output/02participants_debug.json output/participants/*.json; do
+          for f in output/01events.json output/02participants.json output/02participants_debug.json output/participants/*.json; do
             if [ -f "$f" ]; then
               gzip -9 -c "$f" > "${f}.gz"
             fi
@@ -156,7 +156,7 @@ jobs:
           if [ -z "$FTP_SERVER" ] || [ -z "$FTP_USERNAME" ] || [ -z "$FTP_PASSWORD" ] || [ -z "$FTP_REMOTE_DIR" ]; then
             echo "Variables FTP no configuradas"; exit 1
           fi
-          REMOTE_DIR="${FTP_REMOTE_DIR}/Competiciones/EventsPast/data"
+          REMOTE_DIR="${FTP_REMOTE_DIR}/Competiciones/EventosProx/Flow/data"
           BASE_URL="ftp://${FTP_SERVER}${REMOTE_DIR}"
           echo "Subiendo a: ${BASE_URL}/"
 
@@ -173,9 +173,9 @@ jobs:
             echo "Fallo subiendo ${SRC} → ${DST}"
           }
 
-          # 01events_past (nuevo)
-          [ -f "./output/01events_past.json.gz" ] && upload "./output/01events_past.json.gz" "01events_past.json.gz"
-          [ -f "./output/01events_past.json" ]    && upload "./output/01events_past.json"    "01events_past.json"
+          # 01events (nuevo)
+          [ -f "./output/01events.json.gz" ] && upload "./output/01events.json.gz" "01events.json.gz"
+          [ -f "./output/01events.json" ]    && upload "./output/01events.json"    "01events.json"
 
           # Agregados de participantes
           [ -f "./output/02participants.json.gz" ]        && upload "./output/02participants.json.gz"        "02participants.json.gz"
@@ -193,8 +193,8 @@ jobs:
         with:
           name: fullscrape-json-${{ github.run_number }}
           path: |
-            output/01events_past.json
-            output/01events_past.json.gz
+            output/01events.json
+            output/01events.json.gz
             output/02participants.json
             output/02participants.json.gz
             output/02participants_debug.json
