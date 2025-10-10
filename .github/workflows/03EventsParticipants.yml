@@ -88,60 +88,60 @@ jobs:
         shell: bash
         run: mkdir -p "${OUT_DIR}" "${OUT_DIR}/participants"
 
-      # ========== Uploader por archivo (usado por flow_events.py) ==========
-      - name: Create per-file uploader script (safe)
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p scripts
-          cat > scripts/upload_event.sh <<'BASH'
-#!/usr/bin/env bash
-set -euo pipefail
+# ========== Uploader por archivo (usado por flow_events.py) ==========
+- name: Create per-file uploader script (safe)
+  shell: bash
+  run: |
+    set -euo pipefail
+    mkdir -p scripts
+    {
+      echo '#!/usr/bin/env bash'
+      echo 'set -euo pipefail'
+      echo ''
+      echo 'LOCAL_PATH="${1:-}"'
+      echo 'REMOTE_NAME="${2:-}"'
+      echo ''
+      echo '# === Config vía entorno ==='
+      echo 'FTP_SCHEME="${FTP_SCHEME:-ftp}"               # ftp | ftps | sftp'
+      echo 'FTP_HOST="${FTP_HOST:-}"'
+      echo 'FTP_USER="${FTP_USER:-}"'
+      echo 'FTP_PASS="${FTP_PASS:-}"'
+      echo 'FTP_REMOTE_DIR="${FTP_REMOTE_DIR:-/}"'
+      echo 'SLEEP_BETWEEN="${SLEEP_BETWEEN:-2}"           # segundos entre subidas'
+      echo ''
+      echo 'trim_one(){ printf "%s" "$1" | tr -d "\r" | sed "s/^[ \t]\+//; s/[ \t]\+$//"; }'
+      echo 'trim_all_lines(){ tr -d "\r" | sed "s/^[ \t]\+//; s/[ \t]\+$//" | tr -d "\n"; }'
+      echo ''
+      echo 'FTP_SCHEME="$(trim_one "$FTP_SCHEME")"'
+      echo 'FTP_HOST="$(trim_one "$FTP_HOST")"'
+      echo 'FTP_USER="$(trim_one "$FTP_USER")"'
+      echo 'FTP_PASS="$(trim_one "$FTP_PASS")"'
+      echo 'FTP_REMOTE_DIR="$(printf "%s" "$FTP_REMOTE_DIR" | trim_all_lines)"'
+      echo ''
+      echo '[[ -z "$LOCAL_PATH" || -z "$REMOTE_NAME" ]] && { echo "Uso: upload_event.sh <local_path> <remote_name>"; exit 2; }'
+      echo '[[ ! -f "$LOCAL_PATH" ]] && { echo "ℹ️ No existe $LOCAL_PATH; se omite."; exit 0; }'
+      echo 'for v in FTP_HOST FTP_USER FTP_PASS; do [[ -z "${!v}" ]] && { echo "❌ Falta ${v}"; exit 1; }; done'
+      echo ''
+      echo '[[ "$FTP_REMOTE_DIR" != /* ]] && FTP_REMOTE_DIR="/$FTP_REMOTE_DIR"'
+      echo 'FTP_REMOTE_DIR="$(printf "%s" "$FTP_REMOTE_DIR" | sed "s://*:/:g; s:/*$::")"'
+      echo ''
+      echo 'URL_BASE="${FTP_SCHEME}://${FTP_HOST}${FTP_REMOTE_DIR}"'
+      echo 'URL_FILE="${URL_BASE}/${REMOTE_NAME}"'
+      echo ''
+      echo 'CURL_OPTS=( -sS --fail --show-error --retry 3 --retry-delay 2 --user "$FTP_USER:$FTP_PASS" )'
+      echo 'case "$FTP_SCHEME" in'
+      echo '  ftp|ftps) CURL_OPTS+=( --ftp-method nocwd --ftp-create-dirs ) ;;'
+      echo '  sftp)     : ;;'
+      echo '  *) echo "❌ Esquema no soportado: $FTP_SCHEME"; exit 1 ;;'
+      echo 'esac'
+      echo ''
+      echo 'echo "⬆️  ${LOCAL_PATH} → ${URL_FILE}"'
+      echo 'curl "${CURL_OPTS[@]}" -T "$LOCAL_PATH" "$URL_FILE"'
+      echo 'echo "✅ Subido: ${REMOTE_NAME}"'
+      echo 'sleep "$SLEEP_BETWEEN"'
+    } > scripts/upload_event.sh
+    chmod +x scripts/upload_event.sh
 
-LOCAL_PATH="${1:-}"
-REMOTE_NAME="${2:-}"
-
-# === Config vía entorno ===
-FTP_SCHEME="${FTP_SCHEME:-ftp}"               # ftp | ftps | sftp
-FTP_HOST="${FTP_HOST:-}"
-FTP_USER="${FTP_USER:-}"
-FTP_PASS="${FTP_PASS:-}"
-FTP_REMOTE_DIR="${FTP_REMOTE_DIR:-/}"
-SLEEP_BETWEEN="${SLEEP_BETWEEN:-2}"           # segundos entre subidas
-
-trim_one(){ printf '%s' "$1" | tr -d '\r' | sed 's/^[ \t]\+//; s/[ \t]\+$//' ; }
-trim_all_lines(){ tr -d '\r' | sed 's/^[ \t]\+//; s/[ \t]\+$//' | tr -d '\n'; }
-
-FTP_SCHEME="$(trim_one "$FTP_SCHEME")"
-FTP_HOST="$(trim_one "$FTP_HOST")"
-FTP_USER="$(trim_one "$FTP_USER")"
-FTP_PASS="$(trim_one "$FTP_PASS")"
-FTP_REMOTE_DIR="$(printf '%s' "$FTP_REMOTE_DIR" | trim_all_lines)"
-
-[[ -z "$LOCAL_PATH" || -z "$REMOTE_NAME" ]] && { echo "Uso: upload_event.sh <local_path> <remote_name>"; exit 2; }
-[[ ! -f "$LOCAL_PATH" ]] && { echo "ℹ️ No existe $LOCAL_PATH; se omite."; exit 0; }
-for v in FTP_HOST FTP_USER FTP_PASS; do [[ -z "${!v}" ]] && { echo "❌ Falta \$${v}"; exit 1; }; done
-
-# Normaliza ruta
-[[ "$FTP_REMOTE_DIR" != /* ]] && FTP_REMOTE_DIR="/$FTP_REMOTE_DIR"
-FTP_REMOTE_DIR="$(printf '%s' "$FTP_REMOTE_DIR" | sed 's://*:/:g; s:/*$::')"
-
-URL_BASE="${FTP_SCHEME}://${FTP_HOST}${FTP_REMOTE_DIR}"
-URL_FILE="${URL_BASE}/${REMOTE_NAME}"
-
-CURL_OPTS=( -sS --fail --show-error --retry 3 --retry-delay 2 --user "$FTP_USER:$FTP_PASS" )
-case "$FTP_SCHEME" in
-  ftp|ftps) CURL_OPTS+=( --ftp-method nocwd --ftp-create-dirs ) ;;
-  sftp)     : ;; # sftp no crea dirs automáticamente
-  *) echo "❌ Esquema no soportado: $FTP_SCHEME"; exit 1 ;;
-esac
-
-echo "⬆️  ${LOCAL_PATH} → ${URL_FILE}"
-curl "${CURL_OPTS[@]}" -T "$LOCAL_PATH" "$URL_FILE"
-echo "✅ Subido: ${REMOTE_NAME}"
-sleep "$SLEEP_BETWEEN"
-BASH
-          chmod +x scripts/upload_event.sh
 
       # ========== Export & sanitize FTP vars ==========
       - name: Export & sanitize FTP vars for uploader
