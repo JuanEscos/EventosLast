@@ -1,4 +1,4 @@
-name: 01EventosPast
+name: 01EventsPast
 
 on:
   schedule:
